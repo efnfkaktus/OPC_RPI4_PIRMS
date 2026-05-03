@@ -3,34 +3,174 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Dynamický PLC Dashboard</title>
+    <title>OPC UA Bridge Monitor | Stable v1.4</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        #tagSelector {
-            min-height: 100px;
+        :root {
+            --bg-dark: #0f111a;
+            --card-bg: #1a1d2b;
+            --accent: #0078d4;
+            --text-light: #f8f9fa;
+            --text-dim: #b0b0b0;
+            --border: #2d324a;
+            --btn-export: #114b5f;
         }
 
-        /* Aby bylo vidět více tagů v seznamu */
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-light);
+            font-family: 'Segoe UI', sans-serif;
+            overflow-x: hidden;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            color: var(--text-light);
+        }
+
+        .tag-pill-container {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .tag-option {
+            cursor: pointer;
+            padding: 4px 12px;
+            border-radius: 15px;
+            border: 1px solid var(--accent);
+            font-size: 0.8rem;
+            transition: 0.2s;
+        }
+
+        .tag-option.active {
+            background-color: var(--accent);
+            color: white;
+        }
+
+        #diagContainer {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            gap: 10px;
+        }
+
+        .diag-item {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 8px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.03);
+            border-left: 4px solid var(--accent);
+            min-height: 0;
+        }
+
+        .diag-value {
+            font-family: 'Consolas', monospace;
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #4fc3f7;
+            line-height: 1;
+        }
+
+        .diag-label {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+
+        .status-disconnected {
+            background-color: #555;
+        }
+
+        .status-subscribed {
+            background-color: #28a745;
+            box-shadow: 0 0 8px #28a745;
+        }
+
+        .status-faulted {
+            background-color: #dc3545;
+        }
+
+        .btn-export {
+            background-color: var(--btn-export);
+            color: #4fc3f7;
+            border: 1px solid #1a5f7a;
+            font-size: 0.75rem;
+            padding: 5px 10px;
+            font-weight: 600;
+            transition: 0.3s;
+        }
+
+        .btn-export:hover {
+            background-color: #16607a;
+            color: white;
+        }
     </style>
 </head>
 
-<body class="bg-light">
-    <div class="container mt-5">
-        <div class="card shadow">
-            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">Multi-Tag Monitor</h5>
-                <small>Pro výběr více hodnot drž Ctrl</small>
+<body>
+
+    <nav class="navbar navbar-dark bg-black border-bottom border-secondary mb-3">
+        <div class="container-fluid">
+            <span class="navbar-brand fw-bold small">OPC UA BRIDGE <span class="text-accent">v1.4</span></span>
+            <div class="d-flex align-items-center">
+                <span id="statusDot" class="status-dot status-disconnected"></span>
+                <span id="statusText" class="small text-uppercase fw-bold">Offline</span>
             </div>
-            <div class="card-body">
-                <div class="row mb-3">
-                    <div class="col-12">
-                        <label class="form-label font-weight-bold">Dostupné tagy v databázi:</label>
-                        <select id="tagSelector" class="form-select" multiple>
-                        </select>
+        </div>
+    </nav>
+
+    <div class="container-fluid px-3">
+        <div class="row">
+            <!-- LEVÁ STRANA: GRAF -->
+            <div class="col-md-8 col-lg-9">
+                <div class="card p-3 mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="m-0 text-uppercase">Trend Analysis <small class="text-dim ms-2">| Live Stream</small>
+                        </h6>
+                        <div id="tagPills" class="tag-pill-container"></div>
+                    </div>
+                    <div style="height: 520px;">
+                        <canvas id="plcChart"></canvas>
                     </div>
                 </div>
-                <canvas id="plcChart" style="width:100%; height:450px;"></canvas>
+            </div>
+
+            <!-- PRAVÁ STRANA: DIAGNOSTIKA + OVLÁDÁNÍ + EXPORT -->
+            <div class="col-md-4 col-lg-3">
+                <div class="card p-3" style="height: 400px; margin-bottom: 15px;">
+                    <h6 class="text-uppercase text-dim small mb-3">Live Diagnostics</h6>
+                    <div id="diagContainer"></div>
+                </div>
+
+                <div class="card p-3 mb-3">
+                    <h6 class="text-uppercase text-dim small mb-2">Manual Override</h6>
+                    <div class="d-grid gap-2">
+                        <button onclick="odeslatPrikaz(true)" class="btn btn-outline-success btn-sm">SET TRUE /
+                            START</button>
+                        <button onclick="odeslatPrikaz(false)" class="btn btn-outline-danger btn-sm">SET FALSE /
+                            STOP</button>
+                    </div>
+                    <div id="cmdStatus" class="mt-2 small text-center text-dim"></div>
+                </div>
+
+                <div class="card p-2 border-secondary shadow-sm">
+                    <button onclick="exportToCSV()" class="btn btn-export w-100">EXPORT DATA (CSV)</button>
+                </div>
             </div>
         </div>
     </div>
@@ -38,9 +178,7 @@
     <script>
         let myChart;
         let config = {};
-
-        // Barvy pro různé křivky
-        const barvy = ['#ff6384', '#36a2eb', '#4bc0c0', '#ffcd56', '#9966ff', '#c9cbcf'];
+        let vybraneTagy = [];
 
         async function inicializuj() {
             const ctx = document.getElementById('plcChart').getContext('2d');
@@ -48,149 +186,125 @@
                 type: 'line',
                 data: { labels: [], datasets: [] },
                 options: {
-                    responsive: true,
-                    scales: { y: { beginAtZero: true } },
-                    plugins: { legend: { position: 'top' } }
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { grid: { color: '#222' }, ticks: { color: '#777' } },
+                        y: { grid: { color: '#222' }, ticks: { color: '#777' } }
+                    },
+                    plugins: { legend: { labels: { color: '#eee' } } }
                 }
             });
 
             try {
-                // 1. Získání konfigurace
-                const configRes = await fetch('/api/config');
-                config = await configRes.json();
+                const res = await fetch('/api/config');
+                config = await res.json();
+                await nactiTagy();
 
-                // 2. NAČTENÍ UNIKÁTNÍCH TAGŮ Z DB
-                await nactiDostupneTagy();
-
-                // 3. Spuštění smyčky aktualizace
-                fetchData();
                 setInterval(fetchData, 5000);
-
-                // Reakce na změnu výběru
-                document.getElementById('tagSelector').addEventListener('change', fetchData);
-
-            } catch (err) {
-                console.error("Chyba při startu:", err);
-            }
+                fetchData();
+            } catch (err) { updateStatus('faulted'); }
         }
 
-        async function nactiDostupneTagy() {
-            // Voláme Supabase s příkazem select(tag_name) a chceme unikátní hodnoty
-            // Poznámka: Supabase API nemá přímo "DISTINCT", tak si řekneme o tagy
+        async function nactiTagy() {
             const url = `${config.url}/rest/v1/plc_data?select=tag_name`;
-            const res = await fetch(url, {
-                headers: { 'apikey': config.key, 'Authorization': `Bearer ${config.key}` }
+            const res = await fetch(url, { headers: { 'apikey': config.key, 'Authorization': `Bearer ${config.key}` } });
+            const tags = await res.json();
+            const unikatni = [...new Set(tags.map(d => d.tag_name))];
+
+            const container = document.getElementById('tagPills');
+            container.innerHTML = '';
+            unikatni.forEach(tag => {
+                const div = document.createElement('div');
+                div.className = 'tag-option';
+                div.innerText = tag;
+                div.onclick = () => {
+                    if (vybraneTagy.includes(tag)) vybraneTagy = vybraneTagy.filter(t => t !== tag);
+                    else vybraneTagy.push(tag);
+                    div.classList.toggle('active');
+                    fetchData();
+                };
+                container.appendChild(div);
             });
-            const data = await res.json();
-
-            // Vytvoříme unikátní seznam v JavaScriptu
-            const unikatniTagy = [...new Set(data.map(item => item.tag_name))];
-            const selector = document.getElementById('tagSelector');
-
-            selector.innerHTML = ''; // Vyčistit
-            unikatniTagy.forEach(tag => {
-                const opt = document.createElement('option');
-                opt.value = tag;
-                opt.innerHTML = tag;
-                selector.appendChild(opt);
-            });
-
-            // Předvybrat první tag, aby graf nebyl prázdný
-            if (selector.options.length > 0) {
-                selector.options[0].selected = true;
-            }
+            if (unikatni.length > 0) { vybraneTagy = [unikatni[0]]; container.firstChild.classList.add('active'); }
         }
 
         async function fetchData() {
-            // Získání pole vybraných tagů
-            const vybraneVolby = Array.from(document.getElementById('tagSelector').selectedOptions).map(o => o.value);
-            if (vybraneVolby.length === 0) return;
+            if (vybraneTagy.length === 0 || !config.url) return;
 
-            // Sestavení filtru pro více hodnot: tag_name=in.(Tag1,Tag2)
-            const tagFiltr = `(${vybraneVolby.join(',')})`;
-            const url = `${config.url}/rest/v1/plc_data?tag_name=in.${tagFiltr}&order=received_at.desc&limit=100`;
+            const url = `${config.url}/rest/v1/plc_data?tag_name=in.(${vybraneTagy.join(',')})&order=received_at.desc&limit=100`;
 
             try {
-                const res = await fetch(url, {
-                    headers: { 'apikey': config.key, 'Authorization': `Bearer ${config.key}` }
-                });
-                const surovatData = await res.json();
+                const res = await fetch(url, { headers: { 'apikey': config.key, 'Authorization': `Bearer ${config.key}` } });
+                let data = await res.json();
+                data = data.reverse();
 
-                // Seskupení dat podle tagu (aby se nekřížily čáry)
-                const skupiny = {};
-                vybraneVolby.forEach(tag => skupiny[tag] = []);
+                if (data.length > 0) updateStatus('Subscribed');
 
-                surovatData.forEach(d => {
-                    if (skupiny[d.tag_name]) {
-                        skupiny[d.tag_name].push({ x: new Date(d.received_at).toLocaleTimeString(), y: d.value });
+                // Diagnostika
+                const diag = document.getElementById('diagContainer');
+                diag.innerHTML = '';
+                vybraneTagy.forEach(tag => {
+                    const entry = [...data].reverse().find(d => d.tag_name === tag);
+                    if (entry) {
+                        const div = document.createElement('div');
+                        div.className = 'diag-item';
+                        div.innerHTML = `<div class="diag-value">${entry.value}</div><div class="diag-label">${tag} | ${entry.quality || 'GOOD'}</div>`;
+                        diag.appendChild(div);
                     }
                 });
 
-                // Příprava datasetů pro Chart.js
-                myChart.data.labels = [...new Set(surovatData.map(d => new Date(d.received_at).toLocaleTimeString()))].reverse();
+                // Grafika křivek
+                const colors = ['#4fc3f7', '#ffb74d', '#81c784', '#ba68c8', '#e57373'];
+                myChart.data.labels = [...new Set(data.map(d => new Date(d.received_at).toLocaleTimeString()))];
+                myChart.data.datasets = vybraneTagy.map((tag, i) => {
+                    // TADY JE TA OPRAVA: Pouze 'start' je hranatý. 'reell', 'pocitani' a 'TEST' jsou plynulé[cite: 2]
+                    const isDig = (tag.toLowerCase() === 'start');
 
-                myChart.data.datasets = vybraneVolby.map((tag, index) => ({
-                    label: tag,
-                    data: skupiny[tag].reverse().map(pt => pt.y),
-                    borderColor: barvy[index % barvy.length],
-                    backgroundColor: 'transparent',
-                    tension: 0.2
-                }));
-
-                myChart.update('none'); // Update bez otravných animací při každém refreshy
-            } catch (e) {
-                console.error("Chyba dat:", e);
-            }
+                    return {
+                        label: tag,
+                        data: data.filter(d => d.tag_name === tag).map(d => d.value),
+                        borderColor: colors[i % colors.length],
+                        stepped: isDig ? 'before' : false,
+                        tension: isDig ? 0 : 0.4,
+                        pointRadius: 0, borderWidth: 2, fill: false
+                    };
+                });
+                myChart.update('none');
+            } catch (e) { updateStatus('Faulted'); }
         }
 
-        inicializuj();
-    </script>
-    <div class="card mt-3 shadow border-danger">
-        <div class="card-header bg-danger text-white">Ovládání PLC</div>
-        <div class="card-body text-center">
-            <h6 id="controlTagName">Vyberte tag v seznamu výše</h6>
-            <div class="btn-group" role="group">
-                <button type="button" onclick="odeslatPrikaz(true)" class="btn btn-success btn-lg">ZAPNOUT
-                    (TRUE)</button>
-                <button type="button" onclick="odeslatPrikaz(false)" class="btn btn-danger btn-lg">VYPNOUT
-                    (FALSE)</button>
-            </div>
-            <p id="commandStatus" class="mt-2 text-muted"></p>
-        </div>
-    </div>
+        function exportToCSV() {
+            if (!myChart.data.datasets.length) return;
+            let csv = "Timestamp;Tag;Value\n";
+            myChart.data.datasets.forEach(ds => {
+                ds.data.forEach((v, i) => { csv += `${myChart.data.labels[i]};${ds.label};${v}\n`; });
+            });
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Data_Export_${new Date().getTime()}.csv`;
+            a.click();
+        }
 
-    <script>
-        async function odeslatPrikaz(hodnota) {
-            // Vezmeme první vybraný tag ze seznamu
-            const selector = document.getElementById('tagSelector');
-            const vybranyTag = selector.value;
-            const status = document.getElementById('commandStatus');
+        function updateStatus(s) {
+            document.getElementById('statusDot').className = 'status-dot status-' + s.toLowerCase();
+            document.getElementById('statusText').innerText = s;
+        }
 
-            if (!vybranyTag) {
-                alert("Nejdříve vyberte tag v seznamu!");
-                return;
-            }
-
-            status.innerText = "Odesílám příkaz...";
-
+        async function odeslatPrikaz(v) {
+            if (!vybraneTagy.length) return;
             try {
                 const res = await fetch('/api/write', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ tagName: vybranyTag, value: hodnota })
+                    body: JSON.stringify({ tagName: vybraneTagy[0], value: v })
                 });
-
-                if (res.ok) {
-                    status.innerText = `✅ Úspěšně zapsáno ${hodnota} do ${vybranyTag}`;
-                    status.className = "mt-2 text-success";
-                } else {
-                    throw new Error("Server odmítl zápis");
-                }
-            } catch (err) {
-                status.innerText = "❌ Chyba zápisu: " + err.message;
-                status.className = "mt-2 text-danger";
-            }
+                document.getElementById('cmdStatus').innerText = res.ok ? "Odesláno" : "Chyba";
+            } catch (e) { document.getElementById('cmdStatus').innerText = "Offline"; }
         }
+
+        inicializuj();
     </script>
 </body>
 
